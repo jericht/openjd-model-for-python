@@ -34,25 +34,91 @@ jobs:
     with:
       tag: ${{ needs.TagRelease.outputs.tag }}
 
-  PreRelease:
-      needs: [TagRelease, UnitTests]
-      uses: OpenJobDescription/.github/.github/workflows/reusable_prerelease.yml@mainline
-      permissions:
-        id-token: write
-        contents: write
-      secrets: inherit
-      with:
-          tag: ${{ needs.TagRelease.outputs.tag }}
+  BuildWheels:
+    name: Build wheel (${{ matrix.os }} / ${{ matrix.target }})
+    needs: [TagRelease, UnitTests]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest,   target: x86_64-unknown-linux-gnu,   manylinux: auto }
+          - { os: ubuntu-latest,   target: aarch64-unknown-linux-gnu,  manylinux: auto }
+          - { os: windows-latest,  target: x86_64-pc-windows-msvc }
+          - { os: windows-11-arm,  target: aarch64-pc-windows-msvc }
+          - { os: macos-latest,    target: aarch64-apple-darwin }
+          - { os: macos-15-intel,  target: x86_64-apple-darwin }
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.TagRelease.outputs.tag }}
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Inject VCS version
+        run: pip install setuptools_scm && python scripts/maturin_build.py --version-only
+        shell: bash
+      - name: Build wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          manylinux: ${{ matrix.manylinux || 'auto' }}
+          args: --release --out dist
+      - name: Upload wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.os }}-${{ matrix.target }}
+          path: dist/*.whl
+
+  BuildSdist:
+    name: Build sdist
+    needs: [TagRelease, UnitTests]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.TagRelease.outputs.tag }}
+          fetch-depth: 0
+      - name: Build sdist
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: --out dist
+      - name: Upload sdist
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+
+  # Collect all wheels + sdist into a single artifact matching the name
+  # that reusable_release.yml expects (build-artifact/dist/).
+  CollectArtifacts:
+    name: Collect build artifacts
+    needs: [BuildWheels, BuildSdist]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: build-artifact
+          path: dist
 
   Release:
-      needs: [TagRelease, PreRelease]
-      uses: OpenJobDescription/.github/.github/workflows/reusable_release.yml@mainline
-      secrets: inherit
-      permissions:
-        id-token: write
-        contents: write
-      with:
-          tag: ${{ needs.TagRelease.outputs.tag }}
+    needs: [TagRelease, CollectArtifacts]
+    uses: OpenJobDescription/.github/.github/workflows/reusable_release.yml@mainline
+    secrets: inherit
+    permissions:
+      id-token: write
+      contents: write
+    with:
+      tag: ${{ needs.TagRelease.outputs.tag }}
 
   Publish:
     needs: [TagRelease, Release]
@@ -61,31 +127,22 @@ jobs:
       id-token: write
     secrets: inherit
     with:
-        tag: ${{ needs.TagRelease.outputs.tag }}
+      tag: ${{ needs.TagRelease.outputs.tag }}
 
   # PyPI does not support reusable workflows yet
-  # # See https://github.com/pypi/warehouse/issues/11096
+  # See https://github.com/pypi/warehouse/issues/11096
   PublishToPyPI:
-    needs: [TagRelease, Publish]
+    needs: [TagRelease, Publish, CollectArtifacts]
     runs-on: ubuntu-latest
     environment: release
     permissions:
       id-token: write
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6
+      - uses: actions/download-artifact@v4
         with:
-          ref: ${{ needs.TagRelease.outputs.tag }}
-          fetch-depth: 0
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: '3.9'
-      - name: Install dependencies
-        run: |
-          pip install --upgrade hatch "virtualenv<21"
-      - name: Build
-        run: hatch -v build
-      # # See https://docs.github.com/en/actions/deployment/security-hardening-your-deployments/configuring-openid-connect-in-pypi
+          name: build-artifact
+          path: dist
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist
