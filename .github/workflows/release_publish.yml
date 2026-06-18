@@ -34,84 +34,15 @@ jobs:
     with:
       tag: ${{ needs.TagRelease.outputs.tag }}
 
-  BuildWheels:
-    name: Build wheel (${{ matrix.os }} / ${{ matrix.target }})
+  PreRelease:
     needs: [TagRelease, UnitTests]
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { os: ubuntu-latest,   target: x86_64-unknown-linux-gnu,   manylinux: auto }
-          - { os: ubuntu-latest,   target: aarch64-unknown-linux-gnu,  manylinux: auto }
-          - { os: windows-latest,  target: x86_64-pc-windows-msvc }
-          - { os: windows-11-arm,  target: aarch64-pc-windows-msvc }
-          - { os: macos-latest,    target: aarch64-apple-darwin }
-          - { os: macos-15-intel,  target: x86_64-apple-darwin }
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ needs.TagRelease.outputs.tag }}
-          fetch-depth: 0
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - name: Inject VCS version
-        run: pip install setuptools_scm && python scripts/maturin_build.py --version-only
-        shell: bash
-      - name: Build wheel
-        uses: PyO3/maturin-action@v1
-        with:
-          target: ${{ matrix.target }}
-          manylinux: ${{ matrix.manylinux || 'auto' }}
-          args: --release --out dist
-      - name: Upload wheel
-        uses: actions/upload-artifact@v4
-        with:
-          name: wheels-${{ matrix.os }}-${{ matrix.target }}
-          path: dist/*.whl
-
-  BuildSdist:
-    name: Build sdist
-    needs: [TagRelease, UnitTests]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ needs.TagRelease.outputs.tag }}
-          fetch-depth: 0
-      - name: Build sdist
-        uses: PyO3/maturin-action@v1
-        with:
-          command: sdist
-          args: --out dist
-      - name: Upload sdist
-        uses: actions/upload-artifact@v4
-        with:
-          name: sdist
-          path: dist/*.tar.gz
-
-  # Collect all wheels + sdist into a single artifact matching the name
-  # that reusable_release.yml expects (build-artifact/dist/).
-  CollectArtifacts:
-    name: Collect build artifacts
-    needs: [BuildWheels, BuildSdist]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          path: dist
-          merge-multiple: true
-      - uses: actions/upload-artifact@v4
-        with:
-          name: build-artifact
-          path: dist
+    uses: jericht/.github-aws-deadline/.github/workflows/reusable_maturin_prerelease.yml@jericht/reusable-maturin-build
+    secrets: inherit
+    with:
+      tag: ${{ needs.TagRelease.outputs.tag }}
 
   Release:
-    needs: [TagRelease, CollectArtifacts]
+    needs: [TagRelease, PreRelease]
     uses: OpenJobDescription/.github/.github/workflows/reusable_release.yml@mainline
     secrets: inherit
     permissions:
@@ -132,7 +63,7 @@ jobs:
   # PyPI does not support reusable workflows yet
   # See https://github.com/pypi/warehouse/issues/11096
   PublishToPyPI:
-    needs: [TagRelease, Publish, CollectArtifacts]
+    needs: [TagRelease, Publish, PreRelease]
     runs-on: ubuntu-latest
     environment: release
     permissions:
