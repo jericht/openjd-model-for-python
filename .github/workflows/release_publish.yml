@@ -49,3 +49,47 @@ jobs:
           echo ""
           echo "=== file details ==="
           ls -la build-artifact/dist/
+
+  VerifyInstall:
+    name: Verify install (${{ matrix.os }} / Python ${{ matrix.python-version }})
+    needs: PreRelease
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ['3.9', '3.12', '3.13']
+    steps:
+      - name: Download build-artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: build-artifact
+          path: dist
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install wheel from artifact
+        shell: bash
+        run: |
+          VERSION=$(ls dist/openjd_model-*.whl | head -1 | sed 's/.*openjd_model-\([^-]*\)-.*/\1/')
+          pip install --find-links dist/ --only-binary openjd-model openjd-model==$VERSION
+
+      - name: Verify import and basic usage
+        shell: bash
+        run: |
+          python -c "
+          from openjd.model._version import version
+          print(f'openjd-model version: {version}')
+
+          from openjd._openjd_rs import FormatString
+          print(f'Native extension loaded: FormatString={FormatString}')
+
+          from openjd.model import parse_model
+          print('parse_model imported successfully')
+
+          import platform
+          print(f'Platform: {platform.system()} {platform.machine()}')
+          print('ALL CHECKS PASSED')
+          "
