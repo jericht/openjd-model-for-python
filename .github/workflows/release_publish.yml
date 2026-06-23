@@ -14,20 +14,20 @@ permissions:
 
 jobs:
   PreRelease:
-    uses: jericht/.github-aws-deadline/.github/workflows/reusable_maturin_prerelease.yml@jericht/reusable-maturin-build
+    uses: jericht/.github-aws-deadline/.github/workflows/reusable_maturin_prerelease.yml@mainline
     secrets: inherit
     with:
       tag: ${{ inputs.tag }}
 
   Release:
-    needs: [TagRelease, PreRelease]
-    uses: jericht/.github-aws-deadline/.github/workflows/reusable_release.yml@jericht/reusable-maturin-build
+    needs: PreRelease
+    uses: jericht/.github-aws-deadline/.github/workflows/reusable_release.yml@mainline
     secrets: inherit
     permissions:
       id-token: write
       contents: write
     with:
-      tag: ${{ needs.TagRelease.outputs.tag }}
+      tag: ${{ inputs.tag }}
 
   VerifyArtifacts:
     needs: PreRelease
